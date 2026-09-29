@@ -1,0 +1,783 @@
+-- ============================================================
+--  🍕吃 + 🥚捡蛋 + 🧲磁吸 + 🦘跳 v44 手机版（跳跃修复）
+--  纯 UI 按钮，无快捷键
+-- ============================================================
+local Players = game:GetService("Players")
+local RS = game:GetService("ReplicatedStorage")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+
+print(">>> v44 修复版 <<<")
+
+-- ============================================================
+-- UI 容器（Delta 兼容）
+-- ============================================================
+local function getUIContainer()
+    if gethui then
+        local ok, hui = pcall(gethui)
+        if ok and hui then return hui end
+    end
+    if game:GetService("CoreGui") then
+        return game:GetService("CoreGui")
+    end
+    return player:WaitForChild("PlayerGui")
+end
+
+local uiParent = getUIContainer()
+
+for _, name in ipairs({"ComboUI", "MagUI", "EggUI"}) do
+    local old = uiParent:FindFirstChild(name)
+    if old then pcall(function() old:Destroy() end) end
+    local oldPG = player:FindFirstChild("PlayerGui")
+    if oldPG then
+        local o2 = oldPG:FindFirstChild(name)
+        if o2 then pcall(function() o2:Destroy() end) end
+    end
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "ComboUI"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+pcall(function() gui.Parent = uiParent end)
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.new(0, 280, 0, 470)
+frame.Position = UDim2.new(0, 10, 0, 80)
+frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 12)
+
+local tb = Instance.new("Frame")
+tb.Size = UDim2.new(1, 0, 0, 36)
+tb.BackgroundColor3 = Color3.fromRGB(60, 40, 80)
+tb.BorderSizePixel = 0
+tb.Parent = frame
+Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 12)
+
+local ttl = Instance.new("TextLabel")
+ttl.Size = UDim2.new(1, -8, 1, 0)
+ttl.Position = UDim2.new(0, 8, 0, 0)
+ttl.BackgroundTransparency = 1
+ttl.Text = "🍕🥚🧲🦘 v44 修复版"
+ttl.TextColor3 = Color3.fromRGB(255, 255, 255)
+ttl.Font = Enum.Font.GothamBold
+ttl.TextSize = 12
+ttl.TextXAlignment = Enum.TextXAlignment.Left
+ttl.Parent = tb
+
+-- ============================================================
+-- 配置
+-- ============================================================
+local C = {
+    eatOn = false, eatCount = 0,
+    eggOn = false, eggGot = 0, busy = false,
+    status = "就绪",
+    standHoriz = 6,
+    standVert = 4,
+    groundOffset = 3,
+    tapTime = 0.08, tapWait = 0.3,
+    longHold = 4, retryHold = 2,
+    eggTimeout = 10,
+    magnetOn = false, pauseMagnetOnEgg = false,
+    jumpOn = false,
+    jumpInterval = 5,
+}
+
+local Mag = {
+    Radius = 1500, TargetDistance = 6, Speed = 800,
+    IncludePlayers = false, PullY = 2,
+    UseMoveTo = true, ZeroVelocity = true, TeleportRate = 0.03,
+}
+
+-- ============================================================
+-- 输入方式
+-- ============================================================
+local VIM = game:GetService("VirtualInputManager")
+
+local function sendKeyDown(key)
+    pcall(function() VIM:SendKeyEvent(true, key, false, game) end)
+end
+
+local function sendKeyUp(key)
+    pcall(function() VIM:SendKeyEvent(false, key, false, game) end)
+end
+
+if not VIM or not VIM.SendKeyEvent then
+    sendKeyDown = function(key)
+        if keypress then pcall(keypress, key.Value) end
+    end
+    sendKeyUp = function(key)
+        if keyrelease then pcall(keyrelease, key.Value) end
+    end
+end
+
+-- ============================================================
+-- UI 按钮
+-- ============================================================
+local uy = 44
+local function mkBtn(text, color, cb)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -16, 0, 34)
+    b.Position = UDim2.new(0, 8, 0, uy)
+    b.BackgroundColor3 = color
+    b.BorderSizePixel = 0
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.Active = true
+    b.Parent = frame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    b.Activated:Connect(function() cb(b) end)
+    uy = uy + 38
+    return b
+end
+
+local eatBtn = mkBtn("🍕 吃：关", Color3.fromRGB(60, 60, 70), function(btn)
+    C.eatOn = not C.eatOn
+    btn.Text = C.eatOn and "🍕 吃：开" or "🍕 吃：关"
+    btn.BackgroundColor3 = C.eatOn and Color3.fromRGB(80, 180, 100) or Color3.fromRGB(60, 60, 70)
+end)
+
+local eggBtn = mkBtn("🥚 捡蛋：关", Color3.fromRGB(60, 60, 70), function(btn)
+    C.eggOn = not C.eggOn
+    btn.Text = C.eggOn and "🥚 捡蛋：开" or "🥚 捡蛋：关"
+    btn.BackgroundColor3 = C.eggOn and Color3.fromRGB(80, 180, 100) or Color3.fromRGB(60, 60, 70)
+    if not C.eggOn then clearAllLock() end
+end)
+
+local magBtn = mkBtn("🧲 磁吸：关", Color3.fromRGB(60, 60, 70), function(btn)
+    C.magnetOn = not C.magnetOn
+    btn.Text = C.magnetOn and "🧲 磁吸：开" or "🧲 磁吸：关"
+    btn.BackgroundColor3 = C.magnetOn and Color3.fromRGB(180, 80, 80) or Color3.fromRGB(60, 60, 70)
+end)
+
+local pauseBtn = mkBtn("▶ 捡蛋时磁吸照跑：开", Color3.fromRGB(80, 180, 100), function(btn)
+    C.pauseMagnetOnEgg = not C.pauseMagnetOnEgg
+    btn.Text = C.pauseMagnetOnEgg and "⏸ 捡蛋时暂停磁吸：开" or "▶ 捡蛋时磁吸照跑：开"
+    btn.BackgroundColor3 = C.pauseMagnetOnEgg and Color3.fromRGB(180, 80, 80) or Color3.fromRGB(80, 180, 100)
+end)
+
+local jumpBtn = mkBtn("🦘 定时跳：关", Color3.fromRGB(60, 60, 70), function(btn)
+    C.jumpOn = not C.jumpOn
+    btn.Text = C.jumpOn and "🦘 定时跳：开" or "🦘 定时跳：关"
+    btn.BackgroundColor3 = C.jumpOn and Color3.fromRGB(100, 160, 220) or Color3.fromRGB(60, 60, 70)
+    print("[跳] 状态:", C.jumpOn)   -- 调试
+end)
+
+local st = Instance.new("TextLabel")
+st.Size = UDim2.new(1, -16, 0, 22)
+st.Position = UDim2.new(0, 8, 0, uy)
+st.BackgroundTransparency = 1
+st.Text = "剩余蛋: 0 | 已捡: 0"
+st.TextColor3 = Color3.fromRGB(150, 220, 150)
+st.Font = Enum.Font.GothamBold
+st.TextSize = 12
+st.TextXAlignment = Enum.TextXAlignment.Left
+st.Parent = frame
+uy = uy + 22
+
+local st2 = Instance.new("TextLabel")
+st2.Size = UDim2.new(1, -16, 0, 22)
+st2.Position = UDim2.new(0, 8, 0, uy)
+st2.BackgroundTransparency = 1
+st2.Text = "状态: -"
+st2.TextColor3 = Color3.fromRGB(255, 200, 100)
+st2.Font = Enum.Font.Gotham
+st2.TextSize = 11
+st2.TextXAlignment = Enum.TextXAlignment.Left
+st2.Parent = frame
+uy = uy + 24
+
+local function mkInput(y, label, val, cb)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.new(0, 130, 0, 22)
+    l.Position = UDim2.new(0, 8, 0, y)
+    l.BackgroundTransparency = 1
+    l.Text = label
+    l.TextColor3 = Color3.fromRGB(200, 200, 200)
+    l.Font = Enum.Font.Gotham
+    l.TextSize = 11
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.Parent = frame
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0, 70, 0, 22)
+    box.Position = UDim2.new(1, -78, 0, y)
+    box.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    box.BorderSizePixel = 0
+    box.Text = tostring(val)
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.Font = Enum.Font.Gotham
+    box.TextSize = 11
+    box.Parent = frame
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+    box.FocusLost:Connect(function()
+        local n = tonumber(box.Text)
+        if n then cb(n) else box.Text = tostring(val) end
+    end)
+end
+
+uy = uy + 6
+mkInput(uy, "水平偏移：", C.standHoriz, function(n) if n > 0 then C.standHoriz = n end end); uy = uy + 24
+mkInput(uy, "高度偏移：", C.standVert, function(n) C.standVert = n end); uy = uy + 24
+mkInput(uy, "单蛋超时(秒)：", C.eggTimeout, function(n) if n > 0 then C.eggTimeout = n end end); uy = uy + 24
+mkInput(uy, "跳跃间隔(秒)：", C.jumpInterval, function(n) if n > 0 then C.jumpInterval = n end end); uy = uy + 24
+mkInput(uy, "磁吸范围：", Mag.Radius, function(n) if n > 0 then Mag.Radius = n end end); uy = uy + 24
+mkInput(uy, "磁吸距离：", Mag.TargetDistance, function(n) if n >= 1 then Mag.TargetDistance = n end end)
+
+-- ============================================================
+-- 全局状态
+-- ============================================================
+local lockedTarget, lockedCFrame, lastEggPos, currentAngle = nil, nil, nil, 0
+local isHover = false
+local eggStartTime = 0
+
+local function unanchor()
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root and root.Anchored then
+        pcall(function() root.Anchored = false end)
+    end
+end
+
+function clearAllLock()
+    lockedTarget = nil
+    lockedCFrame = nil
+    lastEggPos = nil
+    currentAngle = 0
+    isHover = false
+    C.busy = false
+    eggStartTime = 0
+    unanchor()
+end
+
+-- ============================================================
+-- 路径
+-- ============================================================
+local function tryWait(parent, name, timeout)
+    if not parent then return nil end
+    timeout = timeout or 3
+    local existing = parent:FindFirstChild(name)
+    if existing then return existing end
+    local ok, child = pcall(function() return parent:WaitForChild(name, timeout) end)
+    if ok then return child end
+    return nil
+end
+
+local GAME = tryWait(workspace, "#GAME", 10)
+local Folders = tryWait(GAME, "Folders", 3)
+local VI = tryWait(Folders, "VisibleInstances", 3)
+local SNAEF = tryWait(VI, "SNAEF", 3)
+local FoodFolder = tryWait(SNAEF, "FoodFolder", 3)
+local CubeFolder = SNAEF and SNAEF:FindFirstChild("CubeFolder")
+local GenFolder = tryWait(Folders, "GeneralFolder", 3)
+local HF = tryWait(VI, "HumanoidFolder", 3)
+local NPCFolder = HF and HF:FindFirstChild("NPCFolder")
+local PlayerFolder = HF and HF:FindFirstChild("PlayerFolder")
+local RS_GAME = tryWait(RS, "#GAME", 3)
+local Storage = tryWait(RS_GAME, "_Storage", 3)
+local Events = tryWait(Storage, "Events", 3)
+local AttackMain = tryWait(Events, "AttackMain", 3)
+
+-- ============================================================
+-- 工具
+-- ============================================================
+local function isEgg(obj)
+    if not obj then return false end
+    if not (obj:IsA("BasePart") or obj:IsA("Model")) then return false end
+    local n = obj.Name:lower()
+    return n:find("egg") or n:find("wolf") or n:find("pet")
+end
+
+local function gPos(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj.Position end
+    if obj:IsA("Model") then
+        local p = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+        return p and p.Position
+    end
+end
+
+local function countEggs()
+    if not GenFolder then return 0 end
+    local n = 0
+    for _, obj in ipairs(GenFolder:GetChildren()) do
+        if isEgg(obj) then n = n + 1 end
+    end
+    return n
+end
+
+local function getEggMaxRadius(egg)
+    local parts = {}
+    if egg:IsA("BasePart") then parts = {egg}
+    elseif egg:IsA("Model") then
+        for _, d in ipairs(egg:GetDescendants()) do
+            if d:IsA("BasePart") then table.insert(parts, d) end
+        end
+    end
+    if #parts == 0 then return 5, gPos(egg) end
+    local sum = Vector3.zero
+    for _, p in ipairs(parts) do sum = sum + p.Position end
+    local center = sum / #parts
+    local maxR = 0
+    for _, p in ipairs(parts) do
+        local d = (p.Position - center).Magnitude
+        local s = p.Size
+        local selfR = math.max(s.X, s.Y, s.Z) * 0.5
+        if d + selfR > maxR then maxR = d + selfR end
+    end
+    return maxR, center
+end
+
+local function findGround(x, z, fromY, ignoreEgg)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    local ignoreList = {}
+    local char = player.Character
+    if char then table.insert(ignoreList, char) end
+    if ignoreEgg then table.insert(ignoreList, ignoreEgg) end
+    params.FilterDescendantsInstances = ignoreList
+
+    local origin = Vector3.new(x, fromY + 5, z)
+    local result = workspace:Raycast(origin, Vector3.new(0, -250, 0), params)
+    if result then return result.Position.Y end
+    return nil
+end
+
+local function computeStandCFrame(egg, angleDeg)
+    local radius, center = getEggMaxRadius(egg)
+    if not center then center = gPos(egg) end
+    if not center then return nil, false end
+
+    local ang = math.rad(angleDeg or 0)
+    local dir = Vector3.new(math.cos(ang), 0, math.sin(ang))
+
+    local standX = center.X + dir.X * C.standHoriz
+    local standZ = center.Z + dir.Z * C.standHoriz
+
+    local groundY = findGround(standX, standZ, center.Y, egg)
+
+    local standY, hover
+    if groundY and groundY < center.Y + 5 then
+        standY = groundY + C.groundOffset
+        hover = false
+    else
+        standY = center.Y + C.standVert
+        hover = true
+    end
+
+    local standPos = Vector3.new(standX, standY, standZ)
+    local lookTarget = Vector3.new(center.X, standY, center.Z)
+    return CFrame.lookAt(standPos, lookTarget), hover
+end
+
+local function getInitialAngle(egg)
+    local center = select(2, getEggMaxRadius(egg)) or gPos(egg)
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root or not center then return 0 end
+    local delta = root.Position - center
+    local hor = Vector3.new(delta.X, 0, delta.Z)
+    if hor.Magnitude > 0.5 then
+        return math.deg(math.atan2(hor.Z, hor.X))
+    end
+    return 0
+end
+
+local function isTimeout()
+    return eggStartTime > 0 and (tick() - eggStartTime) >= C.eggTimeout
+end
+
+-- ============================================================
+-- 钉位
+-- ============================================================
+RunService.Heartbeat:Connect(function()
+    if not C.eggOn then return end
+    if not lockedCFrame or not lockedTarget then return end
+    if not lockedTarget.Parent then return end
+
+    local char = player.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    if (root.Position - lockedCFrame.Position).Magnitude > 100 then
+        clearAllLock()
+        C.status = "重生位置过远"
+        return
+    end
+
+    local curEggPos = gPos(lockedTarget)
+    if curEggPos then
+        if not lastEggPos or (curEggPos - lastEggPos).Magnitude > 0.5 then
+            lastEggPos = curEggPos
+            local cf, hv = computeStandCFrame(lockedTarget, currentAngle)
+            if cf then
+                lockedCFrame = cf
+                if hv and not isHover then
+                    isHover = true
+                    pcall(function() root.Anchored = true end)
+                elseif not hv and isHover then
+                    isHover = false
+                    pcall(function() root.Anchored = false end)
+                end
+            end
+        end
+    end
+
+    if not isHover then
+        pcall(function()
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            root.CFrame = lockedCFrame
+        end)
+    end
+end)
+
+-- ============================================================
+-- 定时跳（★ 修复：属性 + 空格双保险）
+-- ============================================================
+local lastJump = 0
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        pcall(function()
+            if not C.jumpOn then return end
+            -- 捡蛋进行中不跳
+            if C.eggOn and C.busy then return end
+            if tick() - lastJump < C.jumpInterval then return end
+
+            local char = player.Character
+            if not char then return end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health <= 0 then return end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+            if root.Anchored then return end
+
+            -- ★ 双重保障：先属性，再模拟空格
+            pcall(function()
+                hum.Jump = true
+            end)
+            task.wait(0.03)
+            pcall(function()
+                hum.Jump = false
+            end)
+
+            sendKeyDown(Enum.KeyCode.Space)
+            task.wait(0.06)
+            sendKeyUp(Enum.KeyCode.Space)
+
+            lastJump = tick()
+            print("[跳] 已跳")
+        end)
+    end
+end)
+
+-- ============================================================
+-- 吃
+-- ============================================================
+local FD = Vector3.new(-0.7967334985733032, -0.5950095057487488, 0.1057322546839714)
+local FO = Vector3.new(69.05123138427734, 29.967998504638672, -286.3015441894531)
+
+task.spawn(function()
+    while true do
+        task.wait(0.03)
+        pcall(function()
+            if not C.eatOn or C.busy or not AttackMain then return end
+            local char = player.Character
+            if not char then return end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if not hum or hum.Health <= 0 then return end
+            if CubeFolder then
+                local boxes = CubeFolder:GetChildren()
+                if #boxes > 0 and boxes[1].Parent then
+                    AttackMain:FireServer({AN="Eat", D=FD, O=FO, FBP=boxes[1]})
+                    return
+                end
+            end
+            if FoodFolder then
+                local foods = FoodFolder:GetChildren()
+                if #foods > 0 and foods[1].Parent then
+                    AttackMain:FireServer({AN="Eat", D=FD, O=FO, FBP=foods[1]})
+                    C.eatCount = C.eatCount + 1
+                end
+            end
+        end)
+    end
+end)
+
+-- ============================================================
+-- 捡蛋主循环
+-- ============================================================
+task.spawn(function()
+    while true do
+        task.wait(0.05)
+        pcall(function()
+            if not C.eggOn then
+                C.status = "捡蛋关闭"
+                clearAllLock()
+                return
+            end
+            if C.busy then return end
+            if not GenFolder then C.status = "无GenFolder" return end
+
+            local char = player.Character
+            if not char then C.status = "无角色" return end
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if not hum then C.status = "等Humanoid" return end
+            if hum.Health <= 0 then C.status = "死亡中" return end
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then C.status = "无root" return end
+
+            local eggs = {}
+            for _, obj in ipairs(GenFolder:GetChildren()) do
+                if isEgg(obj) and gPos(obj) then table.insert(eggs, obj) end
+            end
+            if #eggs == 0 then C.status = "没蛋" return end
+
+            local near, nd = nil, math.huge
+            for _, e in ipairs(eggs) do
+                local p = gPos(e)
+                if p then
+                    local d = (p - root.Position).Magnitude
+                    if d < nd then nd, near = d, e end
+                end
+            end
+            if not near then return end
+
+            C.busy = true
+            lockedTarget = near
+            eggStartTime = tick()
+            currentAngle = getInitialAngle(near)
+            local cf, hv = computeStandCFrame(near, currentAngle)
+            lockedCFrame = cf
+            isHover = hv
+            if not lockedCFrame then C.busy = false return end
+
+            local radius = getEggMaxRadius(near)
+            C.status = string.format("捡: %s (半径%.1f, %s)",
+                near.Name, radius, isHover and "悬空" or "地面")
+
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            root.CFrame = lockedCFrame
+            if isHover then
+                pcall(function() root.Anchored = true end)
+            end
+
+            local t0 = tick()
+            while tick() - t0 < 0.3 do
+                local h = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+                if not h then break end
+                if isHover then break end
+                if h.FloorMaterial ~= Enum.Material.Air then break end
+                task.wait(0.03)
+            end
+            task.wait(0.1)
+
+            sendKeyDown(Enum.KeyCode.E)
+            task.wait(C.tapTime)
+            sendKeyUp(Enum.KeyCode.E)
+            task.wait(C.tapWait)
+
+            if not near.Parent then
+                C.eggGot = C.eggGot + 1
+                C.status = "✅ " .. near.Name
+                clearAllLock()
+                return
+            end
+
+            local function holdOnce(angleDeg, duration)
+                if angleDeg then
+                    currentAngle = angleDeg
+                    local cf2, hv2 = computeStandCFrame(near, angleDeg)
+                    lockedCFrame = cf2
+                    isHover = hv2
+                    if lockedCFrame then
+                        local cc = player.Character
+                        local rr = cc and cc:FindFirstChild("HumanoidRootPart")
+                        if rr then
+                            pcall(function() rr.Anchored = false end)
+                            rr.AssemblyLinearVelocity = Vector3.zero
+                            rr.AssemblyAngularVelocity = Vector3.zero
+                            rr.CFrame = lockedCFrame
+                            if isHover then
+                                pcall(function() rr.Anchored = true end)
+                            end
+                        end
+                    end
+                    task.wait(0.1)
+                end
+                sendKeyDown(Enum.KeyCode.E)
+                local t0 = tick()
+                local timedOut = false
+                while tick() - t0 < duration do
+                    if not near.Parent then break end
+                    if isTimeout() then timedOut = true break end
+                    local c2 = player.Character
+                    if not c2 then break end
+                    local h2 = c2:FindFirstChildOfClass("Humanoid")
+                    if not h2 or h2.Health <= 0 then break end
+                    local r2 = c2:FindFirstChild("HumanoidRootPart")
+                    if r2 and lockedCFrame then
+                        local dx = r2.Position.X - lockedCFrame.Position.X
+                        local dz = r2.Position.Z - lockedCFrame.Position.Z
+                        if math.sqrt(dx*dx + dz*dz) > 30 then
+                            timedOut = true
+                            break
+                        end
+                    end
+                    task.wait(0.05)
+                end
+                pcall(function()
+                    sendKeyUp(Enum.KeyCode.E)
+                end)
+                return not timedOut
+            end
+
+            C.status = "长按: " .. near.Name
+            local ok = holdOnce(nil, C.longHold)
+
+            if near.Parent and ok and not isTimeout() then
+                for _, ang in ipairs({90, 270, 180, 0}) do
+                    if not near.Parent then break end
+                    if isTimeout() then break end
+                    C.status = "换方位 " .. ang .. "°: " .. near.Name
+                    ok = holdOnce(ang, C.retryHold)
+                    if not ok then break end
+                end
+            end
+
+            if not near.Parent then
+                C.eggGot = C.eggGot + 1
+                C.status = "✅ " .. near.Name
+            else
+                if isTimeout() then
+                    C.status = "⏱ 超时放弃: " .. near.Name
+                else
+                    C.status = "❌ " .. near.Name
+                end
+            end
+            clearAllLock()
+        end)
+    end
+end)
+
+-- ============================================================
+-- 死亡 / 重生
+-- ============================================================
+player.CharacterRemoving:Connect(function()
+    clearAllLock()
+    C.status = "角色消失"
+end)
+
+player.CharacterAdded:Connect(function(newChar)
+    clearAllLock()
+    C.status = "重生中"
+    if newChar then
+        newChar:WaitForChild("HumanoidRootPart", 8)
+    end
+    C.status = "就绪"
+end)
+
+-- ============================================================
+-- 磁吸
+-- ============================================================
+local function shouldPull(npc)
+    if not npc:IsA("Model") then return false end
+    if npc == player.Character then return false end
+    local hum = npc:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return false end
+    if npc:FindFirstChildOfClass("ForceField") then return false end
+    return true
+end
+
+local function getAllNPCs()
+    local list = {}
+    if NPCFolder then
+        for _, npc in ipairs(NPCFolder:GetChildren()) do
+            if shouldPull(npc) then table.insert(list, npc) end
+        end
+    end
+    if Mag.IncludePlayers and PlayerFolder then
+        for _, npc in ipairs(PlayerFolder:GetChildren()) do
+            if shouldPull(npc) and Players:GetPlayerFromCharacter(npc) ~= player then
+                table.insert(list, npc)
+            end
+        end
+    end
+    return list
+end
+
+local lastTeleport = 0
+
+RunService.Heartbeat:Connect(function(dt)
+    if not C.magnetOn then return end
+    if C.pauseMagnetOnEgg and C.eggOn and C.busy then return end
+    local char = player.Character
+    if not char then return end
+    local myRoot = char:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+
+    local front = myRoot.CFrame.LookVector
+    front = Vector3.new(front.X, 0, front.Z)
+    if front.Magnitude < 0.01 then front = Vector3.new(0, 0, -1) end
+    front = front.Unit
+    local targetPos = myRoot.Position + front * Mag.TargetDistance + Vector3.new(0, Mag.PullY, 0)
+
+    local npcs = getAllNPCs()
+    for _, npc in ipairs(npcs) do
+        local hrp = npc:FindFirstChild("HumanoidRootPart")
+        local hum = npc:FindFirstChildOfClass("Humanoid")
+        if hrp and hum then
+            local dist = (hrp.Position - myRoot.Position).Magnitude
+            if dist <= Mag.Radius and dist > Mag.TargetDistance + 1 then
+                if Mag.ZeroVelocity then
+                    pcall(function()
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                    end)
+                end
+                if Mag.UseMoveTo then
+                    pcall(function() hum:MoveTo(targetPos) end)
+                end
+                if tick() - lastTeleport >= Mag.TeleportRate then
+                    local dir = targetPos - hrp.Position
+                    local moveAmount = math.min(Mag.Speed * dt * 10, dir.Magnitude)
+                    local newPos = hrp.Position + dir.Unit * moveAmount
+                    pcall(function()
+                        hrp.CFrame = CFrame.new(newPos, newPos + front)
+                    end)
+                end
+            end
+        end
+    end
+    if tick() - lastTeleport >= Mag.TeleportRate then
+        lastTeleport = tick()
+    end
+end)
+
+-- ============================================================
+-- 状态刷新
+-- ============================================================
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        pcall(function()
+            local remain = countEggs()
+            st.Text = "剩余蛋: " .. remain .. " | 已捡: " .. C.eggGot
+            st2.Text = "状态: " .. C.status
+        end)
+    end
+end)
+
+print(">>> v44 修复版加载完成 <<<")
