@@ -1,9 +1,9 @@
 -- ============================================================
---  🍕吃 + 🥚捡蛋 + 🧲磁吸 + 🦘跳 v58
+--  🍕吃 + 🥚捡蛋 + 🧲磁吸 + 🦘跳 + 🥷远距吃 + 🥚蛋优先 v60
 --  ★ 长按/换方位时长 UI 可调
 --  ★ 蛋透明 + 穿透
 -- ============================================================
-print(">>> v58 <<<")
+print(">>> v63 <<<")
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
@@ -73,9 +73,10 @@ local C = {
 }
 
 local Mag = {
-    Radius = 1500, TargetDistance = 6, Speed = 800,
-    IncludePlayers = false, PullY = 2,
-    UseMoveTo = true, ZeroVelocity = true, TeleportRate = 0.03,
+    Radius = 4000, TargetDistance = 3, Speed = 4000,
+    IncludePlayers = false, PullY = 1,
+    UseMoveTo = false, ZeroVelocity = true, TeleportRate = 0,
+    StickMode = true,   -- ★ 牢固模式：每帧直接贴到身边 + 关碰撞 + 抑制下坠
 }
 
 -- ============================================================
@@ -89,7 +90,7 @@ gui.DisplayOrder = 999
 gui.Parent = pg
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 290, 0, 660)
+frame.Size = UDim2.new(0, 290, 0, 920)
 frame.Position = UDim2.new(0, 20, 0, 40)
 frame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
 frame.BorderSizePixel = 0
@@ -102,7 +103,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, 0, 0, 32)
 title.BackgroundColor3 = Color3.fromRGB(60, 40, 80)
 title.BorderSizePixel = 0
-title.Text = "🍕🥚🧲🦘 v58"
+title.Text = "🍕🥚🧲🦘🥷 v63"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 13
@@ -230,6 +231,213 @@ mkLabel(uy, "蛋透明度(0~1)：")
 local ghostBox = mkBox(uy, "0.5"); uy = uy + 24
 mkLabel(uy, "跳跃间隔(秒)：")
 local jumpIntervalBox = mkBox(uy, "5")
+
+-- ============================================================
+-- 🥷 远距吃（独立功能：远离地图吃，不被瞬移）
+-- ============================================================
+local Far = { on = false, mode = "off", safe = nil, fed = 0, lastFire = 0 }
+
+local function farRoot()
+    local ch = player.Character
+    return ch and ch:FindFirstChild("HumanoidRootPart")
+end
+
+local function farFood()
+    -- 食物优先，没有食物才吃盒子
+    if FoodFolder then
+        for _, o in ipairs(FoodFolder:GetChildren()) do
+            if o and o.Parent then return o end
+        end
+    end
+    if CubeFolder then
+        for _, o in ipairs(CubeFolder:GetChildren()) do
+            if o and o.Parent then return o end
+        end
+    end
+    return nil
+end
+
+local function farPosOf(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj.Position end
+    local p = nil
+    pcall(function() p = obj:GetPivot().Position end)
+    if p then return p end
+    local part = obj:FindFirstChildWhichIsA("BasePart", true)
+    return part and part.Position or nil
+end
+
+local farLabel = Instance.new("TextLabel")
+farLabel.Size = UDim2.new(1, -16, 0, 22)
+farLabel.Position = UDim2.new(0, 8, 0, uy)
+farLabel.BackgroundTransparency = 1
+farLabel.Text = "远距吃: 关 | 安全点: 未设置"
+farLabel.TextColor3 = Color3.fromRGB(255, 210, 130)
+farLabel.Font = Enum.Font.Gotham
+farLabel.TextSize = 11
+farLabel.TextXAlignment = Enum.TextXAlignment.Left
+farLabel.Parent = frame
+uy = uy + 24
+
+Far.height = 300
+local function farHeight()
+    local n = tonumber(Far.height)
+    if not n or n <= 0 then n = 300 end
+    if n > 2000 then n = 2000 end
+    return n
+end
+
+local farBtn
+local function farRefresh()
+    local modeText = ({ off = "关", pull = "拉回", lock = "锁定" })[Far.mode] or "关"
+    farBtn.Text = "🥷 远距吃：" .. modeText
+    farBtn.BackgroundColor3 = Far.on and Color3.fromRGB(180, 80, 80) or Color3.fromRGB(60, 60, 70)
+    local sp = Far.safe and ("%.0f, %.0f, %.0f"):format(Far.safe.X, Far.safe.Y, Far.safe.Z) or "未设置"
+    farLabel.Text = ("远距吃: %s%s | 已吃: %d | 安全点: %s"):format(modeText, Far.suspended and "(捡蛋中)" or "", Far.fed, sp)
+end
+
+farBtn = mkBtn("🥷 远距吃：关", Color3.fromRGB(60, 60, 70), function()
+    if Far.mode == "off" then
+        local r = farRoot()
+        if r and not Far.safe then Far.safe = r.Position end
+        if not Far.safe then
+            C.status = "先记录安全点"
+            farRefresh()
+            return
+        end
+        Far.mode = "pull"
+        Far.on = true
+    elseif Far.mode == "pull" then
+        Far.mode = "lock"
+        Far.on = true
+    else
+        Far.mode = "off"
+        Far.on = false
+        local r = farRoot()
+        if r then pcall(function() r.Anchored = false end) end
+    end
+    farRefresh()
+end)
+
+mkBtn("📍 记录安全点（当前位置）", Color3.fromRGB(80, 110, 170), function()
+    local r = farRoot()
+    if r then
+        Far.safe = r.Position
+        Far.fed = 0
+        farRefresh()
+    end
+end)
+
+local farHeightBox = Instance.new("TextBox")
+farHeightBox.Size = UDim2.new(0, 80, 0, 22)
+farHeightBox.Position = UDim2.new(1, -90, 0, uy)
+farHeightBox.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+farHeightBox.BorderSizePixel = 0
+farHeightBox.Text = "300"
+farHeightBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+farHeightBox.Font = Enum.Font.Gotham
+farHeightBox.TextSize = 11
+farHeightBox.Parent = frame
+Instance.new("UICorner", farHeightBox).CornerRadius = UDim.new(0, 5)
+local farHeightLbl = Instance.new("TextLabel")
+farHeightLbl.Size = UDim2.new(0, 150, 0, 22)
+farHeightLbl.Position = UDim2.new(0, 8, 0, uy)
+farHeightLbl.BackgroundTransparency = 1
+farHeightLbl.Text = "安全点高度(格)："
+farHeightLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+farHeightLbl.Font = Enum.Font.Gotham
+farHeightLbl.TextSize = 11
+farHeightLbl.TextXAlignment = Enum.TextXAlignment.Left
+farHeightLbl.Parent = frame
+pcall(function()
+    local function syncH()
+        local n = tonumber(farHeightBox.Text)
+        if n and n > 0 then Far.height = math.min(n, 2000) end
+    end
+    farHeightBox:GetPropertyChangedSignal("Text"):Connect(syncH)
+    farHeightBox.FocusLost:Connect(syncH)
+end)
+uy = uy + 24
+
+mkBtn("☁ 高空安全点(按上面高度)并过去", Color3.fromRGB(110, 90, 170), function()
+    local r = farRoot()
+    if r then
+        local p = r.Position + Vector3.new(0, farHeight(), 0)
+        Far.safe = p
+        pcall(function()
+            r.Anchored = false
+            r.CFrame = CFrame.new(p)
+            r.AssemblyLinearVelocity = Vector3.zero
+        end)
+        farRefresh()
+    end
+end)
+
+mkBtn("🚀 回到安全点", Color3.fromRGB(70, 130, 110), function()
+    local r = farRoot()
+    if r and Far.safe then
+        pcall(function()
+            r.Anchored = false
+            r.CFrame = CFrame.new(Far.safe)
+            r.AssemblyLinearVelocity = Vector3.zero
+        end)
+    end
+end)
+
+farRefresh()
+
+-- 远距吃主循环：用食物坐标伪造 O，绕过距离校验
+task.spawn(function()
+    while true do
+        task.wait(0.06)
+        if Far.on and AttackMain then
+            pcall(function()
+                if C.busy then return end
+                local char = player.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if not hum or hum.Health <= 0 then return end
+                if tick() - Far.lastFire < 0.12 then return end
+                local food = farFood()
+                if not food then return end
+                local fp = farPosOf(food)
+                if not fp then return end
+                local spoofO = fp + Vector3.new(0, 2, 0)
+                Far.lastFire = tick()
+                AttackMain:FireServer({ AN = "Eat", D = FD, O = spoofO, FBP = food })
+                Far.fed = Far.fed + 1
+                C.eatCount = C.eatCount + 1
+            end)
+        end
+    end
+end)
+
+-- 防瞬移：pull = 偏离超过 8 格就拉回；lock = 每帧钉住
+RunService.Heartbeat:Connect(function()
+    if not Far.on or not Far.safe then return end
+    if Far.suspended then
+        -- 捡蛋期间：不钉住、解除锚定，让捡蛋逻辑自由行动
+        local rr = farRoot()
+        if rr and rr.Anchored then pcall(function() rr.Anchored = false end) end
+        return
+    end
+    local r = farRoot()
+    if not r then return end
+    if Far.mode == "lock" then
+        pcall(function()
+            r.Anchored = true
+            r.CFrame = CFrame.new(Far.safe)
+            r.AssemblyLinearVelocity = Vector3.zero
+        end)
+    elseif Far.mode == "pull" then
+        if (r.Position - Far.safe).Magnitude > 8 then
+            pcall(function()
+                r.Anchored = false
+                r.CFrame = CFrame.new(Far.safe)
+                r.AssemblyLinearVelocity = Vector3.zero
+            end)
+        end
+    end
+end)
 
 -- ============================================================
 -- 全局
@@ -488,18 +696,18 @@ task.spawn(function()
             if not char then return end
             local hum = char:FindFirstChildOfClass("Humanoid")
             if not hum or hum.Health <= 0 then return end
-            if CubeFolder then
-                local boxes = CubeFolder:GetChildren()
-                if #boxes > 0 and boxes[1].Parent then
-                    AttackMain:FireServer({AN="Eat", D=FD, O=FO, FBP=boxes[1]})
-                    return
-                end
-            end
             if FoodFolder then
                 local foods = FoodFolder:GetChildren()
                 if #foods > 0 and foods[1].Parent then
                     AttackMain:FireServer({AN="Eat", D=FD, O=FO, FBP=foods[1]})
                     C.eatCount = C.eatCount + 1
+                    return
+                end
+            end
+            if CubeFolder then
+                local boxes = CubeFolder:GetChildren()
+                if #boxes > 0 and boxes[1].Parent then
+                    AttackMain:FireServer({AN="Eat", D=FD, O=FO, FBP=boxes[1]})
                 end
             end
         end)
@@ -760,7 +968,24 @@ RunService.Heartbeat:Connect(function(dt)
                 if Mag.UseMoveTo then
                     pcall(function() hum:MoveTo(targetPos) end)
                 end
-                if tick() - lastTeleport >= Mag.TeleportRate then
+                if Mag.StickMode then
+                    -- ★ 牢固模式：每帧直接把 noob 贴到身边（高空也不会掉下去）
+                    local dir = targetPos - hrp.Position
+                    if dir.Magnitude > 0.05 then
+                        local step = math.max(dir.Magnitude * 0.6, Mag.Speed * dt)
+                        if step > dir.Magnitude then step = dir.Magnitude end
+                        local newPos = hrp.Position + dir.Unit * step
+                        pcall(function()
+                            hrp.CanCollide = false
+                            hrp.CFrame = CFrame.new(newPos, newPos + front)
+                            hrp.AssemblyLinearVelocity = dir.Unit * 400
+                            hrp.AssemblyAngularVelocity = Vector3.zero
+                        end)
+                        pcall(function()
+                            hum.PlatformStand = true
+                        end)
+                    end
+                elseif tick() - lastTeleport >= Mag.TeleportRate then
                     local dir = targetPos - hrp.Position
                     local moveAmount = math.min(Mag.Speed * dt * 10, dir.Magnitude)
                     local newPos = hrp.Position + dir.Unit * moveAmount
@@ -852,3 +1077,49 @@ task.spawn(function()
 end)
 
 print(">>> v58 加载完成 <<<")
+
+-- ============================================================
+-- 🥚 蛋优先协调器：有蛋先捡蛋，捡完再回安全点远距吃
+-- ============================================================
+task.spawn(function()
+    while true do
+        task.wait(0.3)
+        pcall(function()
+            if Far.mode == "off" then
+                Far.suspended = false
+                return
+            end
+            local hasEgg = false
+            if C.eggOn and GenFolder then
+                for _, o in ipairs(GenFolder:GetChildren()) do
+                    if isEgg(o) and gPos(o) then
+                        hasEgg = true
+                        break
+                    end
+                end
+            end
+            if hasEgg and not Far.suspended then
+                Far.suspended = true
+                local r = farRoot()
+                if r then pcall(function() r.Anchored = false end) end
+                C.status = "先捡蛋（临时解除锁定）"
+            elseif (not hasEgg) and Far.suspended then
+                Far.suspended = false
+                local r = farRoot()
+                if r and Far.safe then
+                    pcall(function()
+                        r.Anchored = false
+                        r.CFrame = CFrame.new(Far.safe)
+                        r.AssemblyLinearVelocity = Vector3.zero
+                    end)
+                end
+                C.status = "蛋已捡完，回安全点吃"
+                if Far.mode == "lock" then
+                    task.wait(0.1)
+                    local r2 = farRoot()
+                    if r2 then pcall(function() r2.Anchored = true end) end
+                end
+            end
+        end)
+    end
+end)
